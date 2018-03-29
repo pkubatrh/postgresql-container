@@ -1,0 +1,58 @@
+#!/bin/bash
+
+set -ex
+
+BRANCH=${1:-master}
+
+git clean -f -d
+GENERATED_PATHS=$(ls -1)
+
+# checkout source branch
+git checkout "$BRANCH" && git submodule update --init
+COPY_PATHS=$(ls -1)
+tag=$(git rev-parse HEAD)
+
+# copy the branch content into source/
+mkdir source
+for i in $COPY_PATHS; do
+    cp -r "$i" source
+done
+VERSIONS=$(sed -n 's/^VERSIONS[[:space:]]*=//p' source/Makefile)
+
+git checkout generated
+# Sometimes git does not remove common/ on branch change
+[ -d common ] && rm -rf common
+
+for i in $GENERATED_PATHS; do
+    case "$i" in
+    # Do not remove the update script itself
+    update)
+        continue
+        ;;
+    *)
+        rm -rf "$i"
+        ;;
+    esac
+done
+
+# Generate the sources inside source/ and copy them to root
+(
+    cd source
+    make generate-all
+    for i in $VERSIONS; do
+        cp -r "$i" ../
+    done
+)
+rm -rf source
+
+# Add both existing and deleted files to the index
+git add ./*
+for i in $(git ls-files --deleted | xargs); do
+    git add "$i"
+done
+
+if ! git diff --cached --exit-code --quiet ; then
+    git commit -m "auto-sync: master commit $tag"
+else
+    echo "Nothing changed"
+fi
